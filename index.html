@@ -1316,7 +1316,7 @@
       <div class="section-title">
         <div>
           <h2>Próximos eventos deportivos</h2>
-          <div class="schedule-updated">UFC / MMA · Champions League · Fórmula 1 · ATP/WTA · Premier League</div>
+          <div class="schedule-updated">UFC / MMA · Boxeo · NBA · Champions League · Fórmula 1 · ATP/WTA · Premier League</div>
         </div>
         <span class="provider-badge" id="sportsScheduleUpdated">Actualizando…</span>
       </div>
@@ -1333,6 +1333,8 @@
           <span class="filter-label">Deporte</span>
           <button class="filter-button" type="button" data-sport-filter="all">Todos</button>
           <button class="filter-button" type="button" data-sport-filter="mma">UFC</button>
+          <button class="filter-button" type="button" data-sport-filter="boxing">Boxeo</button>
+          <button class="filter-button" type="button" data-sport-filter="nba">NBA</button>
           <button class="filter-button" type="button" data-sport-filter="ucl">Champions</button>
           <button class="filter-button" type="button" data-sport-filter="f1">F1</button>
           <button class="filter-button" type="button" data-sport-filter="tennis">Tenis</button>
@@ -1345,6 +1347,18 @@
           <h3>🥋 MMA / UFC</h3>
           <div class="schedule-card-subtitle">Próximos eventos y peleas principales</div>
           <div class="schedule-list" id="mmaScheduleList"></div>
+        </article>
+
+        <article class="panel schedule-card" data-sport="boxing">
+          <h3>🥊 Boxeo</h3>
+          <div class="schedule-card-subtitle">Próximas carteleras y peleas disponibles</div>
+          <div class="schedule-list" id="boxingScheduleList"></div>
+        </article>
+
+        <article class="panel schedule-card" data-sport="nba">
+          <h3>🏀 NBA</h3>
+          <div class="schedule-card-subtitle">Próximos partidos y marcadores</div>
+          <div class="schedule-list" id="nbaScheduleList"></div>
         </article>
 
         <article class="panel schedule-card" data-sport="ucl">
@@ -1373,7 +1387,7 @@
       </div>
 
       <div class="source-note">
-        Agenda basada en scoreboards/calendarios públicos de ESPN consultados directamente. Champions y Premier usan ventanas cortas de 7 días con fallback a consultas diarias; ATP/WTA usa una ventana de 21 días. Cada fuente falla de forma independiente.
+        Agenda basada en scoreboards/calendarios públicos de ESPN consultados directamente. NBA usa ESPN; Champions y Premier usan ventanas cortas de 7 días con fallback a consultas diarias; ATP/WTA usa una ventana de 21 días. Boxeo usa el dataset abierto de <a href="https://sporting-events.org/data/boxing/" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">Sporting Events</a>. Cada fuente falla de forma independiente.
       </div>
     </section>
 
@@ -1389,7 +1403,7 @@
 
   <script>
     const locale = "es-CL";
-    const APP_VERSION = "v26";
+    const APP_VERSION = "v27";
     const REPOSITORY = "edwstopA/world-dashboard";
 
     const systemState = {
@@ -1627,7 +1641,7 @@
       const savedRange = preferenceGet("scheduleRangeFilter");
       const savedSport = preferenceGet("scheduleSportFilter");
       if (["all", "today", "tomorrow", "7d"].includes(savedRange)) scheduleFilter.range = savedRange;
-      if (["all", "mma", "ucl", "f1", "tennis", "epl"].includes(savedSport)) scheduleFilter.sport = savedSport;
+      if (["all", "mma", "boxing", "nba", "ucl", "f1", "tennis", "epl"].includes(savedSport)) scheduleFilter.sport = savedSport;
       syncScheduleFilterButtons();
     }
 
@@ -2169,7 +2183,10 @@
       championsDaysAhead: 45,
       premierDaysAhead: 21,
       tennisDaysAhead: 21,
+      nbaDaysAhead: 14,
       mmaMaxItems: 4,
+      boxingMaxItems: 6,
+      nbaMaxItems: 8,
       championsMaxItems: 6,
       f1MaxItems: 4,
       tennisMaxItems: 6,
@@ -2375,6 +2392,50 @@
       return results;
     }
 
+    function parseNbaLive(data) {
+      const results = [];
+
+      for (const event of (data?.events || [])) {
+        const competition = event?.competitions?.[0];
+        if (competition?.status?.type?.state !== "in") continue;
+
+        const teams = [...(competition?.competitors || [])]
+          .sort((a, b) => {
+            if (a?.homeAway === "home") return -1;
+            if (b?.homeAway === "home") return 1;
+            return Number(a?.order || 99) - Number(b?.order || 99);
+          })
+          .slice(0, 2);
+
+        if (teams.length < 2) continue;
+
+        results.push({
+          id: `nba-${event.id || competition.id}`,
+          sport: "basketball",
+          competition: "NBA",
+          icon: "🏀",
+          stage: event?.season?.slug || "NBA",
+          detail:
+            competition?.status?.displayClock
+            || competition?.status?.type?.shortDetail
+            || competition?.status?.type?.detail
+            || "En juego",
+          venue: competition?.venue?.fullName || "",
+          broadcast:
+            competition?.broadcasts?.flatMap(b => b?.names || []).join(", ")
+            || competition?.broadcast
+            || "",
+          startDate: event?.date || competition?.date || "",
+          competitors: teams.map(t => ({
+            name: t?.team?.shortDisplayName || t?.team?.displayName || "Equipo",
+            score: String(t?.score ?? "0")
+          }))
+        });
+      }
+
+      return results;
+    }
+
     function renderSportsCard(item) {
       if (item.sport === "racing") {
         const driverRows = item.competitors.map(driver => `
@@ -2452,7 +2513,7 @@
           </div>
 
           <div class="sport-footer">
-            <span>${sportsEscape(item.venue || "Champions League")}</span>
+            <span>${sportsEscape(item.venue || item.competition || "Evento en vivo")}</span>
             <span>${item.broadcast ? sportsEscape(item.broadcast) : "Marcador en vivo"}</span>
           </div>
         </article>`;
@@ -2479,7 +2540,7 @@
 
       // Prioridad: Fórmula 1, Champions y después tenis (singles primero).
       const sorted = [...items].sort((a, b) => {
-        const priority = { racing: 0, soccer: 1, tennis: 2 };
+        const priority = { racing: 0, basketball: 1, soccer: 2, tennis: 3 };
         const pa = priority[a.sport] ?? 9;
         const pb = priority[b.sport] ?? 9;
 
@@ -2512,6 +2573,7 @@
       ucl: "https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.champions/scoreboard",
       epl: "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard",
       mma: "https://site.api.espn.com/apis/site/v2/sports/mma/ufc/scoreboard",
+      nba: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
       f1: "https://site.api.espn.com/apis/site/v2/sports/racing/f1/scoreboard",
       atp: "https://site.api.espn.com/apis/site/v2/sports/tennis/atp/scoreboard",
       wta: "https://site.api.espn.com/apis/site/v2/sports/tennis/wta/scoreboard"
@@ -2583,15 +2645,17 @@
 
     async function loadLiveSports() {
       try {
-        const [ucl, atp, wta, f1] = await Promise.allSettled([
+        const [ucl, atp, wta, f1, nba] = await Promise.allSettled([
           fetchJsonSafe("ucl"),
           fetchJsonSafe("atp"),
           fetchJsonSafe("wta"),
-          fetchJsonSafe("f1")
+          fetchJsonSafe("f1"),
+          fetchJsonSafe("nba")
         ]);
 
         const live = [];
         if (f1.status === "fulfilled") live.push(...parseF1Live(f1.value));
+        if (nba.status === "fulfilled") live.push(...parseNbaLive(nba.value));
         if (ucl.status === "fulfilled") live.push(...parseChampionsLive(ucl.value));
         if (atp.status === "fulfilled") live.push(...parseTennisLive(atp.value, "ATP"));
         if (wta.status === "fulfilled") live.push(...parseTennisLive(wta.value, "WTA"));
@@ -2605,7 +2669,7 @@
           deduped.push(item);
         }
 
-        const successfulFeeds = [ucl, atp, wta, f1].filter(x => x.status === "fulfilled").length;
+        const successfulFeeds = [ucl, atp, wta, f1, nba].filter(x => x.status === "fulfilled").length;
         if (successfulFeeds > 0) {
           sportsLastSuccessfulLoad = Date.now();
           renderLiveSports(deduped);
@@ -3076,6 +3140,69 @@
       `).join("");
     }
 
+    function sportingEventIso(event) {
+      const date = String(event?.date_utc || "").trim();
+      if (!date) return "";
+      const time = String(event?.time_utc || "").trim();
+      return time ? `${date}T${time}:00Z` : `${date}T12:00:00Z`;
+    }
+
+    function parseBoxingSchedule(data) {
+      const now = Date.now() - (24 * 60 * 60 * 1000);
+
+      return (data?.events || [])
+        .map(event => ({
+          title: String(event?.fixture || "Pelea de boxeo"),
+          date: sportingEventIso(event),
+          stage: [event?.city, event?.country].filter(Boolean).join(", ") || "Boxeo",
+          venue: event?.broadcast || "",
+          status: String(event?.status || "").toLowerCase()
+        }))
+        .filter(item => item.status !== "completed")
+        .filter(item => Number.isFinite(Date.parse(item.date)) && Date.parse(item.date) >= now)
+        .sort((a, b) => Date.parse(a.date) - Date.parse(b.date))
+        .slice(0, scheduleConfig.boxingMaxItems);
+    }
+
+    async function loadBoxingData() {
+      const cacheKey = "cache:boxing:sporting-events";
+      try {
+        const response = await fetch("https://sporting-events.org/data/boxing.json", {
+          cache: "no-store"
+        });
+        if (!response.ok) throw new Error(`Boxing HTTP ${response.status}`);
+        const data = await response.json();
+        cacheWrite(cacheKey, data);
+        return { data, cached: false };
+      } catch (error) {
+        console.warn("Boxeo:", error);
+        const cached = cacheRead(cacheKey, 7 * 24 * 60 * 60 * 1000);
+        if (cached) return { data: cached, cached: true };
+        throw error;
+      }
+    }
+
+    function renderTeamSchedule(targetId, items, emptyText) {
+      const target = document.getElementById(targetId);
+      if (!items.length) {
+        target.innerHTML = `<div class="schedule-empty">${sportsEscape(emptyText)}</div>`;
+        return;
+      }
+
+      target.innerHTML = items.map(item => `
+        <div class="schedule-item" data-date="${sportsEscape(item.date || "")}">
+          <div class="schedule-item-title">${sportsEscape(item.title)}</div>
+          <div class="schedule-item-meta">
+            <span class="schedule-date">${sportsEscape(formatScheduleDate(item.date))}</span>
+            <span>${sportsEscape(item.stage || "")}</span>
+          </div>
+          ${item.venue
+            ? `<div class="schedule-item-meta"><span>${sportsEscape(item.venue)}</span></div>`
+            : ""}
+        </div>
+      `).join("");
+    }
+
     function localYmd(date) {
       return new Intl.DateTimeFormat("en-CA", {
         timeZone: primaryLocation.timezone,
@@ -3175,15 +3302,16 @@
     async function loadSportsSchedule() {
       sportsCacheUsed = false;
 
-      const tennisStart = new Date();
-      const tennisEnd = addUtcDays(
-        tennisStart,
-        scheduleConfig.tennisDaysAhead
-      );
-      const tennisRange = scheduleRange(tennisStart, tennisEnd);
+      const now = new Date();
+      const tennisEnd = addUtcDays(now, scheduleConfig.tennisDaysAhead);
+      const tennisRange = scheduleRange(now, tennisEnd);
+      const nbaEnd = addUtcDays(now, scheduleConfig.nbaDaysAhead);
+      const nbaRange = scheduleRange(now, nbaEnd);
 
-      const [mma, ucl, f1, atp, wta, epl] = await Promise.allSettled([
+      const [mma, boxing, nba, ucl, f1, atp, wta, epl] = await Promise.allSettled([
         fetchJsonSafe("mma"),
+        loadBoxingData(),
+        fetchJsonSafe("nba", { dates: nbaRange }),
         fetchSoccerSchedule(
           "ucl",
           scheduleConfig.championsDaysAhead,
@@ -3204,6 +3332,12 @@
       const mmaItems = mma.status === "fulfilled"
         ? futureCalendarItems(mma.value, scheduleConfig.mmaMaxItems)
         : [];
+      const boxingItems = boxing.status === "fulfilled"
+        ? parseBoxingSchedule(boxing.value.data)
+        : [];
+      const nbaItems = nba.status === "fulfilled"
+        ? parseSoccerSchedule(nba.value, scheduleConfig.nbaMaxItems, "NBA")
+        : [];
       const uclItems = ucl.status === "fulfilled"
         ? parseSoccerSchedule(ucl.value, scheduleConfig.championsMaxItems, "Champions League")
         : [];
@@ -3223,6 +3357,28 @@
       } else {
         document.getElementById("mmaScheduleList").innerHTML =
           '<div class="schedule-empty">No se pudo consultar la agenda UFC.</div>';
+      }
+
+      if (boxing.status === "fulfilled") {
+        renderTeamSchedule(
+          "boxingScheduleList",
+          boxingItems,
+          "Sin peleas próximas disponibles en la fuente actual."
+        );
+      } else {
+        document.getElementById("boxingScheduleList").innerHTML =
+          '<div class="schedule-empty">No se pudo consultar la agenda de boxeo.</div>';
+      }
+
+      if (nba.status === "fulfilled") {
+        renderTeamSchedule(
+          "nbaScheduleList",
+          nbaItems,
+          "Sin partidos NBA próximos disponibles."
+        );
+      } else {
+        document.getElementById("nbaScheduleList").innerHTML =
+          '<div class="schedule-empty">No se pudo consultar la agenda NBA.</div>';
       }
 
       if (ucl.status === "fulfilled") {
@@ -3260,6 +3416,18 @@
           sportLabel: "UFC / MMA",
           icon: "🥋"
         })),
+        ...boxingItems.map(item => ({
+          title: item.title,
+          date: item.date,
+          sportLabel: "Boxeo",
+          icon: "🥊"
+        })),
+        ...nbaItems.map(item => ({
+          title: item.title,
+          date: item.date,
+          sportLabel: "NBA",
+          icon: "🏀"
+        })),
         ...uclItems.map(item => ({
           title: item.title,
           date: item.date,
@@ -3288,15 +3456,16 @@
 
       applyScheduleFilters();
 
-      const sportsSources = { mma, ucl, f1, atp, wta, epl };
-      for (const [name, result] of Object.entries(sportsSources)) {
+      const espnSources = { mma, nba, ucl, f1, atp, wta, epl };
+      for (const [name, result] of Object.entries(espnSources)) {
         if (result.status === "rejected") {
           console.warn(`Agenda ${name.toUpperCase()}:`, result.reason);
         }
       }
 
-      const successful = Object.values(sportsSources)
+      const espnSuccessful = Object.values(espnSources)
         .filter(result => result.status === "fulfilled").length;
+      const boxingOk = boxing.status === "fulfilled";
       const updated = document.getElementById("sportsScheduleUpdated");
 
       const updatedTime = new Intl.DateTimeFormat("es-CL", {
@@ -3305,20 +3474,19 @@
         hourCycle: "h23"
       }).format(new Date());
 
-      updated.textContent = successful
-        ? `Actualizado ${updatedTime} · ESPN ${successful}/6${sportsCacheUsed ? " · caché" : ""}`
-        : "ESPN 0/6 · sin conexión a las agendas";
+      updated.textContent =
+        `Actualizado ${updatedTime} · ESPN ${espnSuccessful}/7 · Boxeo ${boxingOk ? "OK" : "N/D"}${sportsCacheUsed || boxing.value?.cached ? " · caché" : ""}`;
 
-      if (successful === 6 && !sportsCacheUsed) {
-        setSystemStatus("sports", "ok", "🏟️ ESPN · 6/6");
-      } else if (successful > 0) {
+      if (espnSuccessful === 7 && boxingOk && !sportsCacheUsed && !boxing.value?.cached) {
+        setSystemStatus("sports", "ok", "🏟️ Deportes · ESPN 7/7 · Boxeo OK");
+      } else if (espnSuccessful > 0 || boxingOk) {
         setSystemStatus(
           "sports",
           "warn",
-          `🏟️ ESPN · ${successful}/6${sportsCacheUsed ? " · caché" : ""}`
+          `🏟️ Deportes · ESPN ${espnSuccessful}/7 · Boxeo ${boxingOk ? "OK" : "N/D"}`
         );
       } else {
-        setSystemStatus("sports", "error", "🏟️ ESPN · sin datos");
+        setSystemStatus("sports", "error", "🏟️ Deportes · sin datos");
       }
     }
 
